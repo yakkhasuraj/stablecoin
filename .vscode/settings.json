@@ -1,0 +1,19 @@
+{
+  // Editor
+  "editor.bracketPairColorization.enabled": true,
+  "editor.formatOnSave": true,
+  "editor.guides.bracketPairs": "active",
+  "editor.stickyScroll.enabled": true,
+  "editor.wordWrap": "on",
+  // Files
+  "files.trimTrailingWhitespace": true,
+  // Git
+  "git.autofetch": true,
+  // Language
+  "[solidity]": {
+    "editor.defaultFormatter": "NomicFoundation.hardhat-solidity"
+  },
+  // Extensions
+  "solidity.formatter": "forge",
+  "solidity.telemetry": false
+}
