@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {AggregatorV3Interface} from "@chainlink/contracts/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Stablecoin} from "./Stablecoin.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {AggregatorV3Interface} from "@chainlink/contracts/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 /**
  * @title A sample Stablecoin engine
@@ -17,22 +17,22 @@ contract SCEngine is ReentrancyGuard {
     uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 50;
     uint256 private constant LIQUIDATION_PRECISION = 100;
-    uint256 private constant HEALTH_FACTOR = 1e18;
     uint256 private constant LIQUIDATION_BONUS = 10;
+    uint256 private constant MINIMUM_HEALTH_FACTOR = 1e18;
 
-    Stablecoin private i_sc;
+    Stablecoin private immutable i_sc;
 
     mapping(address token => address priceFeed) private s_priceFeeds;
     mapping(address user => mapping(address token => uint256 amount)) private s_depositedCollateral;
     mapping(address user => uint256 scAmount) private s_mintedSc;
-    address[] s_collateralTokens;
+    address[] private s_collateralTokens;
 
     event CollateralDeposited(address indexed user, address indexed token, uint256 amount);
     event CollateralRedeemed(address indexed from, address indexed to, address indexed token, uint256 amount);
 
-    error SCEngine__AmountIsLessThanZero();
+    error SCEngine__AmountIsLessThanOne();
     error SCEngine__TokenAndPriceFeedSizeMustBeEqual();
-    error SCEngine__IsInvalidToken();
+    error SCEngine__IsInvalidToken(address token);
     error SCEngine__TransferFailed();
     error SCEngine__BreaksHealthFactor(uint256 healthFactor);
     error SCEngine__MintFailed();
@@ -40,15 +40,15 @@ contract SCEngine is ReentrancyGuard {
     error SCEngine__HealthFactorHasNotImproved();
 
     modifier isMoreThanZero(uint256 amount) {
-        if (amount == 0) {
-            revert SCEngine__AmountIsLessThanZero();
+        if (amount < 1) {
+            revert SCEngine__AmountIsLessThanOne();
         }
         _;
     }
 
     modifier isAllowedToken(address token) {
         if (s_priceFeeds[token] == address(0)) {
-            revert SCEngine__IsInvalidToken();
+            revert SCEngine__IsInvalidToken(token);
         }
         _;
     }
@@ -68,22 +68,24 @@ contract SCEngine is ReentrancyGuard {
     /**
      * @param collateralAddress Address of token to deposit as collateral
      * @param collateralAmount Amount of collateral to deposit
-     * @param scToMint Amount of stablecoin to mint
+     * @param amountOfScToMint Amount of stablecoin to mint
      */
-    function depositCollateralAndMintSC(address collateralAddress, uint256 collateralAmount, uint256 scToMint)
+    function depositCollateralAndMintSc(address collateralAddress, uint256 collateralAmount, uint256 amountOfScToMint)
         external
     {
         depositCollateral(collateralAddress, collateralAmount);
-        mintSC(scToMint);
+        mintSc(amountOfScToMint);
     }
 
     /**
      * @param collateralAddress Address of token to deposit as collateral
      * @param collateralAmount Amount of collateral to deposit
-     * @param scToBurn Amount of stablecoin to burn
+     * @param amountOfScToBurn Amount of stablecoin to burn
      */
-    function redeemCollateralForSC(address collateralAddress, uint256 collateralAmount, uint256 scToBurn) external {
-        burnSC(scToBurn);
+    function redeemCollateralForSc(address collateralAddress, uint256 collateralAmount, uint256 amountOfScToBurn)
+        external
+    {
+        burnSc(amountOfScToBurn);
         redeemCollateral(collateralAddress, collateralAmount);
     }
 
@@ -98,16 +100,16 @@ contract SCEngine is ReentrancyGuard {
         nonReentrant
     {
         uint256 startingUserHealthFactor = _healthFactor(user);
-        if (startingUserHealthFactor >= HEALTH_FACTOR) {
+        if (startingUserHealthFactor >= MINIMUM_HEALTH_FACTOR) {
             revert SCEngine__HealthFactorIsOk();
         }
 
         uint256 collateralAmountFromDebtCovered = getCollateralAmountFromUsd(collateralAddress, debtToCover);
-        uint256 bonusCollateral = (collateralAmountFromDebtCovered * LIQUIDATION_PRECISION) / LIQUIDATION_BONUS;
+        uint256 bonusCollateral = (collateralAmountFromDebtCovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
         uint256 totalCollateralToRedeem = collateralAmountFromDebtCovered + bonusCollateral;
         _redeemCollateral(user, msg.sender, collateralAddress, totalCollateralToRedeem);
 
-        _burnSC(user, msg.sender, debtToCover);
+        _burnSc(user, msg.sender, debtToCover);
 
         uint256 endingUserHealthFactor = _healthFactor(user);
         if (endingUserHealthFactor <= startingUserHealthFactor) {
@@ -117,7 +119,13 @@ contract SCEngine is ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
-    function getHealthFactor() external view {}
+    function getHealthFactor(address user) external view returns (uint256) {
+        return _healthFactor(user);
+    }
+
+    function calculateHealthFactor(uint256 totalMintedSc, uint256 collateralValue) external pure returns (uint256) {
+        return _calculateHealthFactor(totalMintedSc, collateralValue);
+    }
 
     /**
      * @param collateralAddress Address of token to deposit as collateral
@@ -152,12 +160,13 @@ contract SCEngine is ReentrancyGuard {
     }
 
     /**
-     * @param scToMint Amount of stablecoin to mint
+     * @param amountOfScToMint Amount of stablecoin to mint
      */
-    function mintSC(uint256 scToMint) public isMoreThanZero(scToMint) nonReentrant {
-        s_mintedSc[msg.sender] += scToMint;
+    function mintSc(uint256 amountOfScToMint) public isMoreThanZero(amountOfScToMint) nonReentrant {
+        s_mintedSc[msg.sender] += amountOfScToMint;
         _revertIfHealthFactorIsBroken(msg.sender);
-        bool success = i_sc.mint(msg.sender, scToMint);
+
+        bool success = i_sc.mint(msg.sender, amountOfScToMint);
         if (!success) {
             revert SCEngine__MintFailed();
         }
@@ -166,9 +175,17 @@ contract SCEngine is ReentrancyGuard {
     /**
      * @param amount Amount of stablecoin to burn
      */
-    function burnSC(uint256 amount) public isMoreThanZero(amount) {
-        _burnSC(msg.sender, msg.sender, amount);
+    function burnSc(uint256 amount) public isMoreThanZero(amount) {
+        _burnSc(msg.sender, msg.sender, amount);
         _revertIfHealthFactorIsBroken(msg.sender);
+    }
+
+    function getAccountInformation(address user)
+        external
+        view
+        returns (uint256 totalMintedSc, uint256 collateralValue)
+    {
+        return _getAccountInformation(user);
     }
 
     function getCollateralAmountFromUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
@@ -192,12 +209,42 @@ contract SCEngine is ReentrancyGuard {
         return collateralUsdValue;
     }
 
-    function _burnSC(address onBehalfOf, address from, uint256 amount) private {
+    function getCollateralTokens() public view returns (address[] memory) {
+        return s_collateralTokens;
+    }
+
+    function getTokenPriceFeed(address token) public view returns (address) {
+        return s_priceFeeds[token];
+    }
+
+    function getPrecision() public pure returns (uint256) {
+        return PRECISION;
+    }
+
+    function getAdditionalFeedPrecision() public pure returns (uint256) {
+        return ADDITIONAL_FEED_PRECISION;
+    }
+
+    function getLiquidationThreshold() public pure returns (uint256) {
+        return LIQUIDATION_THRESHOLD;
+    }
+
+    function getLiquidationBonus() public pure returns (uint256) {
+        return LIQUIDATION_BONUS;
+    }
+
+    function getMinimumHealthFactor() public pure returns (uint256) {
+        return MINIMUM_HEALTH_FACTOR;
+    }
+
+    function _burnSc(address onBehalfOf, address from, uint256 amount) private {
         s_mintedSc[onBehalfOf] -= amount;
+
         bool success = i_sc.transferFrom(from, address(this), amount);
         if (!success) {
             revert SCEngine__TransferFailed();
         }
+
         i_sc.burn(amount);
     }
 
@@ -213,7 +260,7 @@ contract SCEngine is ReentrancyGuard {
 
     function _revertIfHealthFactorIsBroken(address user) internal view {
         uint256 healthFactor = _healthFactor(user);
-        if (healthFactor < HEALTH_FACTOR) {
+        if (healthFactor < MINIMUM_HEALTH_FACTOR) {
             revert SCEngine__BreaksHealthFactor(healthFactor);
         }
     }
@@ -229,7 +276,15 @@ contract SCEngine is ReentrancyGuard {
 
     function _healthFactor(address user) private view returns (uint256) {
         (uint256 totalMintedSc, uint256 collateralValue) = _getAccountInformation(user);
-        uint256 adjustedCollateral = (collateralValue * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
-        return (adjustedCollateral * PRECISION) / totalMintedSc;
+        // uint256 adjustedCollateral = (collateralValue * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        // return (adjustedCollateral * PRECISION) / totalMintedSc;
+        return _calculateHealthFactor(totalMintedSc, collateralValue);
+    }
+
+    function _calculateHealthFactor(uint256 totalMintedSc, uint256 collateralValue) internal pure returns (uint256) {
+        if (totalMintedSc == 0) return type(uint256).max;
+
+        uint256 collateralAdjustedForThreshold = (collateralValue * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        return (collateralAdjustedForThreshold * 1e18) / totalMintedSc;
     }
 }
