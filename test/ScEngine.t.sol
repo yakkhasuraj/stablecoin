@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
 import {StdCheats} from "forge-std/StdCheats.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
-import {Stablecoin} from "../src/Stablecoin.sol";
-import {SCEngine} from "../src/SCEngine.sol";
-import {ScEngineScript} from "../script/SCEngine.s.sol";
 import {HelperConfig} from "../script/HelperConfig.s.sol";
 import {MockV3Aggregator} from "./MockV3Aggregator.sol";
+import {ScEngine} from "../src/ScEngine.sol";
+import {ScEngineScript} from "../script/ScEngine.s.sol";
+import {Stablecoin} from "../src/Stablecoin.sol";
 
-contract SCEngineTest is StdCheats, Test {
+contract ScEngineTest is StdCheats, Test {
     ScEngineScript deployer;
     Stablecoin sc;
-    SCEngine scEngine;
+    ScEngine scEngine;
     HelperConfig config;
 
     address ethUsdPriceFeed;
@@ -88,8 +88,8 @@ contract SCEngineTest is StdCheats, Test {
         priceFeeds.push(ethUsdPriceFeed);
         priceFeeds.push(btcUsdPriceFeed);
 
-        vm.expectRevert(SCEngine.SCEngine__TokenAndPriceFeedSizeMustBeEqual.selector);
-        new SCEngine(tokens, priceFeeds, address(sc));
+        vm.expectRevert(ScEngine.ScEngine__TokenAndPriceFeedSizeMustBeEqual.selector);
+        new ScEngine(tokens, priceFeeds, address(sc));
     }
 
     function test__GetCollateralAmountFromUsd() public view {
@@ -110,7 +110,7 @@ contract SCEngineTest is StdCheats, Test {
         vm.startPrank(USER);
 
         ERC20Mock(weth).approve(address(scEngine), AMOUNT_COLLATERAL);
-        vm.expectRevert(SCEngine.SCEngine__AmountIsLessThanOne.selector);
+        vm.expectRevert(ScEngine.ScEngine__AmountIsLessThanOne.selector);
         scEngine.depositCollateral(weth, 0);
 
         vm.stopPrank();
@@ -121,7 +121,7 @@ contract SCEngineTest is StdCheats, Test {
 
         vm.startPrank(USER);
 
-        vm.expectRevert(abi.encodeWithSelector(SCEngine.SCEngine__IsInvalidToken.selector, address(randomToken)));
+        vm.expectRevert(abi.encodeWithSelector(ScEngine.ScEngine__IsInvalidToken.selector, address(randomToken)));
         scEngine.depositCollateral(address(randomToken), AMOUNT_COLLATERAL);
 
         vm.stopPrank();
@@ -152,7 +152,7 @@ contract SCEngineTest is StdCheats, Test {
 
         uint256 expectedHealthFactor =
             scEngine.calculateHealthFactor(scEngine.getUsdValue(weth, collateralAmount), amountToMint);
-        vm.expectRevert(abi.encodeWithSelector(SCEngine.SCEngine__BreaksHealthFactor.selector, expectedHealthFactor));
+        vm.expectRevert(abi.encodeWithSelector(ScEngine.ScEngine__BreaksHealthFactor.selector, expectedHealthFactor));
         scEngine.depositCollateralAndMintSc(weth, collateralAmount, amountToMint);
         vm.stopPrank();
     }
@@ -166,7 +166,7 @@ contract SCEngineTest is StdCheats, Test {
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(scEngine), collateralAmount);
         scEngine.depositCollateralAndMintSc(weth, collateralAmount, amountToMint);
-        vm.expectRevert(SCEngine.SCEngine__AmountIsLessThanOne.selector);
+        vm.expectRevert(ScEngine.ScEngine__AmountIsLessThanOne.selector);
         scEngine.mintSc(0);
         vm.stopPrank();
     }
@@ -182,7 +182,7 @@ contract SCEngineTest is StdCheats, Test {
 
         uint256 expectedHealthFactor =
             scEngine.calculateHealthFactor(scEngine.getUsdValue(weth, collateralAmount), amountToMint);
-        vm.expectRevert(abi.encodeWithSelector(SCEngine.SCEngine__BreaksHealthFactor.selector, expectedHealthFactor));
+        vm.expectRevert(abi.encodeWithSelector(ScEngine.ScEngine__BreaksHealthFactor.selector, expectedHealthFactor));
         scEngine.mintSc(amountToMint);
         vm.stopPrank();
     }
@@ -199,7 +199,7 @@ contract SCEngineTest is StdCheats, Test {
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(scEngine), collateralAmount);
         scEngine.depositCollateralAndMintSc(weth, collateralAmount, amountToMint);
-        vm.expectRevert(SCEngine.SCEngine__AmountIsLessThanOne.selector);
+        vm.expectRevert(ScEngine.ScEngine__AmountIsLessThanOne.selector);
         scEngine.burnSc(0);
         vm.stopPrank();
     }
@@ -224,7 +224,7 @@ contract SCEngineTest is StdCheats, Test {
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(scEngine), collateralAmount);
         scEngine.depositCollateralAndMintSc(weth, collateralAmount, amountToMint);
-        vm.expectRevert(SCEngine.SCEngine__AmountIsLessThanOne.selector);
+        vm.expectRevert(ScEngine.ScEngine__AmountIsLessThanOne.selector);
         scEngine.redeemCollateral(weth, 0);
         vm.stopPrank();
     }
@@ -240,7 +240,7 @@ contract SCEngineTest is StdCheats, Test {
     function test__RevertIfRedeemAmountOfScIsZero() public depositCollateralAndMintSC {
         vm.startPrank(USER);
         sc.approve(address(scEngine), amountToMint);
-        vm.expectRevert(SCEngine.SCEngine__AmountIsLessThanOne.selector);
+        vm.expectRevert(ScEngine.ScEngine__AmountIsLessThanOne.selector);
         scEngine.redeemCollateralForSc(weth, 0, amountToMint);
         vm.stopPrank();
     }
@@ -280,7 +280,7 @@ contract SCEngineTest is StdCheats, Test {
         scEngine.depositCollateralAndMintSc(weth, collateralToCover, amountToMint);
         sc.approve(address(scEngine), amountToMint);
 
-        vm.expectRevert(SCEngine.SCEngine__HealthFactorIsOk.selector);
+        vm.expectRevert(ScEngine.ScEngine__HealthFactorIsOk.selector);
         scEngine.liquidate(weth, USER, amountToMint);
         vm.stopPrank();
     }

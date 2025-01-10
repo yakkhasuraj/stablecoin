@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {AggregatorV3Interface} from "@chainlink/contracts/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {OracleLibrary} from "./OracleLibrary.sol";
 import {Stablecoin} from "./Stablecoin.sol";
 
 /**
@@ -12,7 +13,9 @@ import {Stablecoin} from "./Stablecoin.sol";
  * @notice You can use this contract for creating a sample Stablecoin engine
  * @dev Governs Stablecoin
  */
-contract SCEngine is ReentrancyGuard {
+contract ScEngine is ReentrancyGuard {
+    using OracleLibrary for AggregatorV3Interface;
+
     uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
     uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 50;
@@ -30,32 +33,32 @@ contract SCEngine is ReentrancyGuard {
     event CollateralDeposited(address indexed user, address indexed token, uint256 amount);
     event CollateralRedeemed(address indexed from, address indexed to, address indexed token, uint256 amount);
 
-    error SCEngine__AmountIsLessThanOne();
-    error SCEngine__TokenAndPriceFeedSizeMustBeEqual();
-    error SCEngine__IsInvalidToken(address token);
-    error SCEngine__TransferFailed();
-    error SCEngine__BreaksHealthFactor(uint256 healthFactor);
-    error SCEngine__MintFailed();
-    error SCEngine__HealthFactorIsOk();
-    error SCEngine__HealthFactorHasNotImproved();
+    error ScEngine__AmountIsLessThanOne();
+    error ScEngine__TokenAndPriceFeedSizeMustBeEqual();
+    error ScEngine__IsInvalidToken(address token);
+    error ScEngine__TransferFailed();
+    error ScEngine__BreaksHealthFactor(uint256 healthFactor);
+    error ScEngine__MintFailed();
+    error ScEngine__HealthFactorIsOk();
+    error ScEngine__HealthFactorHasNotImproved();
 
     modifier isMoreThanZero(uint256 amount) {
         if (amount < 1) {
-            revert SCEngine__AmountIsLessThanOne();
+            revert ScEngine__AmountIsLessThanOne();
         }
         _;
     }
 
     modifier isAllowedToken(address token) {
         if (s_priceFeeds[token] == address(0)) {
-            revert SCEngine__IsInvalidToken(token);
+            revert ScEngine__IsInvalidToken(token);
         }
         _;
     }
 
     constructor(address[] memory tokens, address[] memory priceFeeds, address stablecoin) {
         if (tokens.length != priceFeeds.length) {
-            revert SCEngine__TokenAndPriceFeedSizeMustBeEqual();
+            revert ScEngine__TokenAndPriceFeedSizeMustBeEqual();
         }
 
         for (uint256 i = 0; i < tokens.length; i++) {
@@ -101,7 +104,7 @@ contract SCEngine is ReentrancyGuard {
     {
         uint256 startingUserHealthFactor = _healthFactor(user);
         if (startingUserHealthFactor >= MINIMUM_HEALTH_FACTOR) {
-            revert SCEngine__HealthFactorIsOk();
+            revert ScEngine__HealthFactorIsOk();
         }
 
         uint256 collateralAmountFromDebtCovered = getCollateralAmountFromUsd(collateralAddress, debtToCover);
@@ -113,7 +116,7 @@ contract SCEngine is ReentrancyGuard {
 
         uint256 endingUserHealthFactor = _healthFactor(user);
         if (endingUserHealthFactor <= startingUserHealthFactor) {
-            revert SCEngine__HealthFactorHasNotImproved();
+            revert ScEngine__HealthFactorHasNotImproved();
         }
 
         _revertIfHealthFactorIsBroken(msg.sender);
@@ -142,7 +145,7 @@ contract SCEngine is ReentrancyGuard {
 
         bool success = IERC20(collateralAddress).transferFrom(msg.sender, address(this), collateralAmount);
         if (!success) {
-            revert SCEngine__TransferFailed();
+            revert ScEngine__TransferFailed();
         }
     }
 
@@ -168,7 +171,7 @@ contract SCEngine is ReentrancyGuard {
 
         bool success = i_sc.mint(msg.sender, amountOfScToMint);
         if (!success) {
-            revert SCEngine__MintFailed();
+            revert ScEngine__MintFailed();
         }
     }
 
@@ -190,17 +193,17 @@ contract SCEngine is ReentrancyGuard {
 
     function getCollateralAmountFromUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.checkStaleLatestRoundData();
         return (usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION);
     }
 
     function getUsdValue(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.checkStaleLatestRoundData();
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
     }
 
-    function getUserCollateral(address user) public view returns (uint256 collateralUsdValue) {
+    function getCollateralOfUser(address user) public view returns (uint256 collateralUsdValue) {
         for (uint256 i = 0; i < s_collateralTokens.length; i++) {
             address token = s_collateralTokens[i];
             uint256 amount = s_depositedCollateral[user][token];
@@ -215,6 +218,10 @@ contract SCEngine is ReentrancyGuard {
 
     function getTokenPriceFeed(address token) public view returns (address) {
         return s_priceFeeds[token];
+    }
+
+    function getCollateralBalanceOfUser(address user, address token) external view returns (uint256) {
+        return s_depositedCollateral[user][token];
     }
 
     function getPrecision() public pure returns (uint256) {
@@ -242,7 +249,7 @@ contract SCEngine is ReentrancyGuard {
 
         bool success = i_sc.transferFrom(from, address(this), amount);
         if (!success) {
-            revert SCEngine__TransferFailed();
+            revert ScEngine__TransferFailed();
         }
 
         i_sc.burn(amount);
@@ -254,14 +261,14 @@ contract SCEngine is ReentrancyGuard {
 
         bool success = IERC20(collateralAddress).transfer(to, collateralAmount);
         if (!success) {
-            revert SCEngine__TransferFailed();
+            revert ScEngine__TransferFailed();
         }
     }
 
     function _revertIfHealthFactorIsBroken(address user) internal view {
         uint256 healthFactor = _healthFactor(user);
         if (healthFactor < MINIMUM_HEALTH_FACTOR) {
-            revert SCEngine__BreaksHealthFactor(healthFactor);
+            revert ScEngine__BreaksHealthFactor(healthFactor);
         }
     }
 
@@ -271,7 +278,7 @@ contract SCEngine is ReentrancyGuard {
         returns (uint256 totalMintedSc, uint256 collateralValue)
     {
         totalMintedSc = s_mintedSc[user];
-        collateralValue = getUserCollateral(user);
+        collateralValue = getCollateralOfUser(user);
     }
 
     function _healthFactor(address user) private view returns (uint256) {
